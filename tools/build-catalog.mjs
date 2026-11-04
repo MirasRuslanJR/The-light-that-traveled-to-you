@@ -1,0 +1,136 @@
+// Builds js/data/stars.js from the HYG v4.1 catalog (CC BY-SA 4.0, astronexus/HYG-Database).
+// Usage: node tools/build-catalog.mjs path/to/hygdata_v41.csv
+// Dev-only tool: the site itself never runs this file.
+
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { GREEK_RU, CONST_GEN_RU, PROPER_RU } from './names-ru.mjs';
+import { GREEK_EN, CONST_EN } from './names-en.mjs';
+
+const PC_TO_LY = 3.261563777;
+const MAG_LIMIT = 6.5;      // naked-eye limit under a dark sky
+const NEAR_LIMIT_LY = 100;  // keep every catalogued star this close, however faint
+const NAME_LIMIT_LY = 130;  // stars that can be "the next star" need a readable name
+
+const src = process.argv[2];
+if (!src) { console.error('usage: node tools/build-catalog.mjs hygdata_v41.csv'); process.exit(1); }
+
+// Minimal RFC-4180 CSV line parser (HYG quotes some fields).
+function parseLine(line) {
+  const out = []; let cur = ''; let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur); return out;
+}
+
+const lines = readFileSync(src, 'utf8').split(/\r?\n/);
+const head = parseLine(lines[0]);
+const col = Object.fromEntries(head.map((h, i) => [h, i]));
+
+function ruName(r) {
+  const proper = r[col.proper];
+  if (proper && PROPER_RU[proper]) return PROPER_RU[proper];
+  const con = CONST_GEN_RU[r[col.con]];
+  const bayer = r[col.bayer];
+  if (bayer && con) {
+    const [letter, num] = bayer.split('-');
+    const g = GREEK_RU[letter];
+    if (g) return `${g}${num ? `-${num}` : ''} ${con}`;
+  }
+  const flam = r[col.flam];
+  if (flam && con) return `${flam} ${con}`;
+  if (proper) return proper;
+  const hip = r[col.hip];
+  return hip ? `HIP ${hip}` : null;
+}
+
+// Same rule as the Russian names, so switching language never swaps one star for a different-sounding one:
+// a well-known traditional name, otherwise the Bayer/Flamsteed designation, otherwise the IAU name.
+function enName(r) {
+  const proper = r[col.proper];
+  if (proper && PROPER_RU[proper]) return proper === 'Rigil Kentaurus' ? 'Alpha Centauri' : proper;
+  const con = CONST_EN[r[col.con]];
+  const bayer = r[col.bayer];
+  if (bayer && con) {
+    const [letter, num] = bayer.split('-');
+    const g = GREEK_EN[letter];
+    if (g) return `${g}${num ? `-${num}` : ''} ${con[1]}`;
+  }
+  const flam = r[col.flam];
+  if (flam && con) return `${flam} ${con[1]}`;
+  if (proper) return proper;
+  const hip = r[col.hip];
+  return hip ? `HIP ${hip}` : null;
+}
+
+const stars = [];
+for (let li = 1; li < lines.length; li++) {
+  if (!lines[li]) continue;
+  const r = parseLine(lines[li]);
+  if (r[col.proper] === 'Sol') continue;
+  const distPc = parseFloat(r[col.dist]);
+  const mag = parseFloat(r[col.mag]);
+  if (!(distPc > 0) || distPc >= 100000 || !Number.isFinite(mag)) continue;
+  const distLy = distPc * PC_TO_LY;
+  if (mag > MAG_LIMIT && distLy > NEAR_LIMIT_LY) continue;
+  const ci = parseFloat(r[col.ci]);
+  stars.push({
+    x: parseFloat(r[col.x]) * PC_TO_LY,
+    y: parseFloat(r[col.y]) * PC_TO_LY,
+    z: parseFloat(r[col.z]) * PC_TO_LY,
+    absmag: parseFloat(r[col.absmag]),
+    ci: Number.isFinite(ci) ? ci : 0.65,
+    mag, distLy,
+    name: (distLy <= NAME_LIMIT_LY || mag <= 3.5) ? ruName(r) : null,
+    con: CONST_GEN_RU[r[col.con]] || "",
+    nameEn: (distLy <= NAME_LIMIT_LY || mag <= 3.5) ? enName(r) : null,
+    conEn: CONST_EN[r[col.con]]?.[0] || '',
+  });
+}
+
+// Brightest first: a renderer that caps star count on weak devices just takes a prefix.
+stars.sort((a, b) => a.mag - b.mag);
+
+// Packed as six Int16 per star (12 bytes): unit direction ×32767, log-distance, absolute magnitude ×1000,
+// B–V ×5000. Distance resolution is 0.015% — a thousand times finer than the measurements themselves.
+const F = 6;
+const lnMin = Math.log(Math.min(...stars.map((s) => s.distLy))) - 1e-6;
+const lnMax = Math.log(Math.max(...stars.map((s) => s.distLy))) + 1e-6;
+const buf = new Int16Array(stars.length * F);
+const names = [];
+const q = (v, k, label) => { const r = Math.round(v * k); if (r < -32767 || r > 32767) throw new Error(label + ' out of range: ' + v); return r; };
+stars.forEach((s, i) => {
+  const d = Math.hypot(s.x, s.y, s.z);
+  const ld = Math.round((Math.log(s.distLy) - lnMin) / (lnMax - lnMin) * 65535) - 32768;
+  buf.set([q(s.x / d, 32767, 'x'), q(s.y / d, 32767, 'y'), q(s.z / d, 32767, 'z'), ld, q(s.absmag, 1000, 'absmag'), q(s.ci, 5000, 'ci')], i * F);
+  if (s.name) names.push([i, s.name, s.con, s.nameEn || s.name, s.conEn]);
+});
+
+const b64 = Buffer.from(buf.buffer).toString('base64');
+const visible = stars.filter(s => s.mag <= MAG_LIMIT).length;
+const out = `// Generated by tools/build-catalog.mjs — do not edit by hand.
+// Star data: HYG Database v4.1 by David Nash (astronexus), CC BY-SA 4.0.
+// Layout: Int16 [unit x, y, z ×32767 (equatorial J2000), log-distance, absolute magnitude ×1000, B-V ×5000] per star,
+// sorted brightest-first. STAR_NAMES rows: [index, Russian name, constellation (RU genitive), English name, constellation (EN)].
+export const STAR_FIELDS = ${F};
+export const STAR_COUNT = ${stars.length};
+export const VISIBLE_COUNT = ${visible};
+export const MAG_LIMIT = ${MAG_LIMIT};
+export const LN_DIST = [${lnMin}, ${lnMax}];
+export const STAR_DATA_B64 = '${b64}';
+export const STAR_NAMES = ${JSON.stringify(names)};
+`;
+
+const here = dirname(fileURLToPath(import.meta.url));
+const dest = join(here, '..', 'js', 'data', 'stars.js');
+mkdirSync(dirname(dest), { recursive: true });
+writeFileSync(dest, out);
+const named = names.length;
+const unnamedNear = stars.filter(s => s.distLy <= NAME_LIMIT_LY && !s.name).length;
+console.log(`stars: ${stars.length} (naked-eye ${visible}), named: ${named}, near-but-unnamed: ${unnamedNear}, file: ${(out.length / 1024).toFixed(0)} KB`);
