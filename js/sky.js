@@ -8,12 +8,17 @@ varying vec2 vNdc;
 void main() { vNdc = aXY; gl_Position = vec4(aXY, 0.0, 1.0); }`;
 
 const BG_FRAG = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
+#else
+precision mediump float;
+#endif
 varying vec2 vNdc;
-uniform vec3 uRight, uUp, uFwd, uCam, uZenith, uSunDir, uMoonDir, uGalN, uGalC;
+uniform vec3 uRight, uUp, uFwd, uCam, uZenith, uSunDir, uMoonDir;
 uniform float uFocal, uAspect, uEarth, uDay, uTwilight, uMoonOn, uMoonR, uR, uSphere, uTime, uMoonLight;
 uniform float uPulse, uPulseMax, uPulsePhase, uBgAlpha, uReveal, uPulseAge, uSunGlow;
 uniform vec3 uSunHorizonDir, uEastV, uNorthV;
+uniform sampler2D uMW;
 
 float hash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float noise(vec3 x) {
@@ -63,7 +68,8 @@ float shellGlow(vec3 dir, float R) {
     }
   }
   float dmin = sqrt(max(dot(uCam, uCam) - b * b, 0.0));
-  if (b < 0.0) g += 0.22 * exp(-pow((dmin - R) / (R * 0.035), 2.0));
+  float q = (dmin - R) / (R * 0.035);
+  if (b < 0.0) g += 0.22 * exp(-q * q);
   return g;
 }
 
@@ -84,20 +90,12 @@ void main() {
   float s = dot(dir, uZenith);                       // sine of altitude
   vec3 col = vec3(0.0035, 0.0045, 0.009);
 
-  // ----- Milky Way, laid out in real galactic coordinates -----
-  vec3 gx = uGalC, gz = uGalN, gy = normalize(cross(gz, gx));
-  float gb = asin(clamp(dot(dir, gz), -1.0, 1.0));
-  float glon = atan(dot(dir, gy), dot(dir, gx));       // 0 toward the centre in Sagittarius
-  float disk = exp(-abs(gb) / 0.10) * (0.32 + 0.68 * exp(-glon * glon / 1.9));
-  float bulge = exp(-(glon * glon / 0.09 + gb * gb / 0.028));
-  float n1 = fbm(dir * 6.0), n2 = fbm(dir * 15.0 + 7.0);
-  float clouds = smoothstep(0.2, 0.9, n1 * 0.75 + n2 * 0.45);
-  float rift = smoothstep(0.42, 0.78, fbm(dir * 8.0 + 3.0)) * exp(-pow(gb / 0.04, 2.0)) * smoothstep(1.5, 0.3, abs(glon));
-  float mw = (disk * (0.35 + 0.95 * clouds) + bulge * 1.3) * (1.0 - 0.88 * rift);
-  vec3 mwTint = mix(vec3(0.72, 0.8, 1.0), vec3(1.0, 0.85, 0.66), clamp(bulge * 1.6 + exp(-glon * glon / 0.6) * 0.45, 0.0, 1.0));
+  // ----- Milky Way: baked once into a texture (see MW_FRAG), looked up by direction -----
+  vec2 mwUv = vec2(atan(dir.y, dir.x) * 0.1591549 + 0.5, asin(clamp(dir.z, -1.0, 1.0)) * 0.3183099 + 0.5);
+  vec4 mwT = texture2D(uMW, mwUv);
   float skyDark = uEarth > 0.001 ? (1.0 - uDay) * (1.0 - 0.75 * uMoonLight) * (1.0 - 0.8 * uTwilight) : 1.0;
-  col += mwTint * mw * 0.075 * uReveal * mix(1.0, skyDark, uEarth);
-  float dust = starDust(dir, 0.035 + 0.3 * clamp(mw, 0.0, 1.0));
+  col += mwT.rgb * mwT.rgb * 0.2 * uReveal * mix(1.0, skyDark, uEarth);
+  float dust = starDust(dir, 0.035 + 0.3 * mwT.a);
   col += vec3(0.95, 0.95, 1.0) * dust * 0.55 * uReveal * mix(1.0, skyDark, uEarth);
 
   // ----- Atmosphere, only while standing on Earth -----
@@ -129,8 +127,11 @@ void main() {
 
     // Ground: a low, irregular horizon so it reads as a real place, lit by whatever lights the sky.
     float az = atan(dot(dir, uEastV), dot(dir, uNorthV));
-    float far = 0.012 + 0.03 * fbm(vec3(cos(az) * 2.0, sin(az) * 2.0, 1.7));
-    float near = 0.004 + 0.018 * fbm(vec3(cos(az) * 5.0, sin(az) * 5.0, 7.3));
+    float far = 0.012, near = 0.004;
+    if (s < 0.06) {
+      far += 0.03 * fbm(vec3(cos(az) * 2.0, sin(az) * 2.0, 1.7));
+      near += 0.018 * fbm(vec3(cos(az) * 5.0, sin(az) * 5.0, 7.3));
+    }
     float gFar = smoothstep(far + 0.0015, far - 0.0015, s);
     float gNear = smoothstep(near + 0.0015, near - 0.0015, s);
     vec3 ambient = skyLight(uZenith, uSunDir, 1.0) * 26.0 * lightUp * skyK + vec3(0.004, 0.005, 0.007) + skyLight(uZenith, uMoonDir, 1.0) * 0.5 * uMoonLight;
@@ -192,8 +193,48 @@ void main() {
   }
 
   // Dither to keep the dark gradients free of banding.
-  col += (hash(vec3(gl_FragCoord.xy, uTime)) - 0.5) / 255.0;
+  vec2 dp = mod(gl_FragCoord.xy, 64.0) + floor(mod(uTime * 60.0, 64.0));
+  col += (fract(52.9829189 * fract(dot(dp, vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0;
   gl_FragColor = vec4(col, uBgAlpha);
+}`;
+
+// Bakes the Milky Way into a 2048×1024 equirectangular texture (rgb: sqrt of colour / 0.2, so faint parts keep 8-bit precision;
+// a: brightness that sets the star-dust density).
+const MW_FRAG = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+varying vec2 vNdc;
+uniform vec3 uGalN, uGalC;
+float hash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float noise(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x), mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x), mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+float fbm(vec3 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { s += a * noise(p); p *= 2.03; a *= 0.5; } return s; }
+
+
+void main() {
+  vec2 uv = vNdc * 0.5 + 0.5;
+  float ra = (uv.x - 0.5) * 6.2831853, de = (uv.y - 0.5) * 3.1415927;
+  vec3 dir = vec3(cos(de) * cos(ra), cos(de) * sin(ra), sin(de));
+  // ----- Milky Way, laid out in real galactic coordinates -----
+  vec3 gx = uGalC, gz = uGalN, gy = normalize(cross(gz, gx));
+  float gb = asin(clamp(dot(dir, gz), -1.0, 1.0));
+  float glon = atan(dot(dir, gy), dot(dir, gx));       // 0 toward the centre in Sagittarius
+  float disk = exp(-abs(gb) / 0.10) * (0.32 + 0.68 * exp(-glon * glon / 1.9));
+  float bulge = exp(-(glon * glon / 0.09 + gb * gb / 0.028));
+  float n1 = fbm(dir * 6.0), n2 = fbm(dir * 15.0 + 7.0);
+  float clouds = smoothstep(0.2, 0.9, n1 * 0.75 + n2 * 0.45);
+  float rift = smoothstep(0.42, 0.78, fbm(dir * 8.0 + 3.0)) * exp(-(gb / 0.04) * (gb / 0.04)) * smoothstep(1.5, 0.3, abs(glon));
+  float mw = (disk * (0.35 + 0.95 * clouds) + bulge * 1.3) * (1.0 - 0.88 * rift);
+  vec3 mwTint = mix(vec3(0.72, 0.8, 1.0), vec3(1.0, 0.85, 0.66), clamp(bulge * 1.6 + exp(-glon * glon / 0.6) * 0.45, 0.0, 1.0));
+
+
+  gl_FragColor = vec4(sqrt(clamp(mwTint * mw * 0.075 / 0.2, 0.0, 1.0)), clamp(mw, 0.0, 1.0));
 }`;
 
 // Constellation figures, drawn faintly on the celestial sphere while standing on Earth.
@@ -257,12 +298,14 @@ void main() {
   float dist0 = length(aPosAbs.xyz);
   float star = step(0.0, aColSeed.w);
   float reached = step(dist0, uR) * uSphere * star;
-  float front = exp(-pow((dist0 - uR) / max(0.35, uR * 0.012), 2.0)) * uSphere * star;
+  float fq = (dist0 - uR) / max(0.35, uR * 0.012);
+  float front = exp(-fq * fq) * uSphere * star;
   if (uPulse > 0.001) {
     for (int k = 0; k < 4; k++) {
       float f = fract(uPulsePhase + float(k) * 0.25);
       float fade = smoothstep(0.0, 0.06, f) * (1.0 - smoothstep(0.5, 1.0, f)) * step(f, uPulseAge);
-      front += exp(-pow((dist0 - uPulseMax * f) / 0.9, 2.0)) * fade * uPulse * 0.8 * star;
+      float pq = (dist0 - uPulseMax * f) / 0.9;
+      front += exp(-pq * pq) * fade * uPulse * 0.8 * star;
     }
   }
 
@@ -357,7 +400,8 @@ varying vec2 vUv;
 uniform sampler2D uScene, uBloomNear, uBloomFar;
 uniform vec2 uRes;
 uniform float uTime, uBloomK, uAspect;
-float hash(vec2 p) { p = fract(p * vec2(443.897, 441.423)); p += dot(p, p.yx + 19.19); return fract((p.x + p.y) * p.x); }
+// Interleaved gradient noise on small numbers: never overflows, even where mediump is half-float.
+float grain(vec2 fc, float t) { vec2 p = mod(fc, 64.0) + floor(mod(t * 60.0, 64.0)); return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 void main() {
   vec3 c = texture2D(uScene, vUv).rgb;
   vec3 bn = texture2D(uBloomNear, vUv).rgb, bf = texture2D(uBloomFar, vUv).rgb;
@@ -368,7 +412,7 @@ void main() {
   c = mix(c, vec3(Lt), smoothstep(1.5, 10.0, L) * 0.75);            // the hottest cores burn to white, like film
   vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0);
   c *= mix(0.7, 1.0, smoothstep(0.95, 0.25, length(q) / max(uAspect, 1.0) * 1.35));
-  c += (hash(vUv * uRes + fract(uTime * 7.31) * 100.0) - 0.5) * 0.022;
+  c += (grain(gl_FragCoord.xy, uTime) - 0.5) * 0.022;
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -478,8 +522,36 @@ export function createSky(canvas, catalog, lines = []) {
   }
 
   const tri = gl.createBuffer();
+  let mwTex = null;
+  function bakeMilkyWay() {
+    const mwP = program(gl, BG_VERT, MW_FRAG);
+    mwTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, mwTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2048, 1024, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);           // right ascension wraps around
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, mwTex, 0);
+    gl.viewport(0, 0, 2048, 1024);
+    gl.disable(gl.BLEND);
+    gl.useProgram(mwP.p);
+    gl.uniform3fv(mwP.u.uGalN, GAL_N); gl.uniform3fv(mwP.u.uGalC, GAL_C);
+    gl.bindBuffer(gl.ARRAY_BUFFER, tri);
+    const a = gl.getAttribLocation(mwP.p, 'aXY');
+    gl.enableVertexAttribArray(a);
+    gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.disableVertexAttribArray(a);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(fb);
+    gl.deleteProgram(mwP.p);
+  }
   gl.bindBuffer(gl.ARRAY_BUFFER, tri);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  bakeMilkyWay();
 
   // Star buffer, plus the Sun at the origin (visible only once the camera leaves Earth).
   const PLANETS = 5;
@@ -566,6 +638,9 @@ export function createSky(canvas, catalog, lines = []) {
     else gl.disable(gl.BLEND);
 
     gl.useProgram(bg.p);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, mwTex);
+    gl.uniform1i(bg.u.uMW, 0);
     gl.uniform1f(bg.u.uBgAlpha, 1 - trail);
     const U = bg.u;
     gl.uniform3fv(U.uRight, view.right); gl.uniform3fv(U.uUp, view.up); gl.uniform3fv(U.uFwd, view.fwd);
@@ -573,7 +648,6 @@ export function createSky(canvas, catalog, lines = []) {
     gl.uniform3fv(U.uSunDir, env.sunDir); gl.uniform3fv(U.uSunHorizonDir, env.sunHorizonDir);
     gl.uniform3fv(U.uMoonDir, env.moonDir);
     gl.uniform3fv(U.uEastV, env.east); gl.uniform3fv(U.uNorthV, env.north);
-    gl.uniform3fv(U.uGalN, GAL_N); gl.uniform3fv(U.uGalC, GAL_C);
     gl.uniform1f(U.uFocal, f); gl.uniform1f(U.uAspect, aspect);
     gl.uniform1f(U.uEarth, env.earth); gl.uniform1f(U.uDay, env.day); gl.uniform1f(U.uTwilight, env.twilight);
     gl.uniform1f(U.uMoonOn, env.moonOn * env.earth);

@@ -12,12 +12,13 @@
   <meta property="og:image" content="og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A glowing sphere of light among real stars, with the words: The light of your birth is still traveling.">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preload" href="fonts/cormorantgaramond-normal-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/cormorantgaramond-italic-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/fonts.css">
-  <link rel="stylesheet" href="css/main.css?v=17">
+  <link rel="stylesheet" href="css/main.css?v=18">
 </head>
 <body class="op-gate">
   <canvas id="sky" aria-hidden="true"></canvas>
@@ -70,9 +71,10 @@
             <datalist id="places"></datalist>
           </div>
           <button class="cta" type="submit"><span class="cta-label" data-i18n="cta">Find my light</span></button>
-          <p class="form-error" id="form-error" role="alert" aria-live="polite"></p>
+          <p class="form-error" id="form-error" role="alert"></p>
         </form>
         <p class="privacy mono" data-i18n="privacy">Everything is calculated in your browser. Nothing is sent anywhere.</p>
+        <p class="privacy credit mono" data-i18n="credit">Stars: HYG v4.1, CC&nbsp;BY-SA&nbsp;4.0</p>
       </div>
     </section>
 
@@ -135,18 +137,18 @@
     <details>
       <summary class="mono" data-i18n="howTitle">How this is calculated</summary>
       <div class="colophon-body">
-        <p data-i18n="how1">Positions and distances of 12,172 stars come from the HYG v4.1 catalogue (Hipparcos and Gaia measurements). The sky is built with the formulas of Jean Meeus’s “Astronomical Algorithms”: sidereal time, precession, refraction, the Moon, the Sun and the planets. Every calculation is checked against the book’s worked examples.</p>
-        <p data-i18n="how2">Light covers one light-year in one Julian year. The sphere on screen is the distance light has traveled since the moment you were born. Star distances are known to about 1–2%, so arrival dates are given to the month. The Moon is drawn three times its real size so its phase is visible; its position and phase are exact.</p>
+        <p data-i18n="how1">Star positions and distances come from the HYG v4.1 catalogue (mostly Hipparcos measurements). The sky is built with the formulas of Jean Meeus’s “Astronomical Algorithms”: sidereal time, precession, refraction, the Moon, the Sun and the planets. The core formulas are checked against the book’s worked examples.</p>
+        <p data-i18n="how2">Light covers one light-year in one Julian year. The sphere on screen is the distance light has traveled since the moment you were born. Distances to nearby stars are known to a few percent, to distant ones less well, so arrival dates are given to the month. The Moon is drawn three times its real size so its phase is visible; its position (seen from where you stand) and phase are right to a fraction of a degree.</p>
         <p class="mono small" data-i18n="how3">Stars: HYG Database, David Nash, CC&nbsp;BY-SA&nbsp;4.0. Constellation lines: d3-celestial, Olaf Frohn, BSD. Fonts: Cormorant Garamond, IBM Plex Mono, SIL OFL.</p>
       </div>
     </details>
   </footer>
 
-  <section class="future" id="future" hidden aria-live="polite">
+  <section class="future" id="future" hidden tabindex="-1" aria-labelledby="future-caption">
     <div class="future-inner">
-      <p class="eyebrow mono"><span class="idx">05</span> <span data-i18n="futureCaption">Your light, from here on</span></p>
+      <p class="eyebrow mono"><span class="idx">05</span> <span data-i18n="futureCaption" id="future-caption">Your light, from here on</span></p>
       <p class="future-year"><span id="future-year">2026</span> <span class="future-age mono" id="future-age"></span></p>
-      <ol class="life-log future-log" id="future-log"></ol>
+      <ol class="life-log future-log" id="future-log" aria-live="polite"></ol>
       <p class="future-end lead" data-i18n="futureEnd">It will keep going forever — long after anyone is left to look up.</p>
       <div class="actions future-actions">
         <button class="cta" type="button" id="future-postcard"><span class="cta-label" data-i18n="postcard">Postcard</span></button>
@@ -166,6 +168,6 @@
   <div class="scroll-hint mono" id="scroll-hint" aria-hidden="true"><span data-i18n="scroll">Scroll</span><i></i></div>
 
   <noscript><p class="noscript">Этому сайту нужен JavaScript: небо вычисляется прямо в браузере. This site needs JavaScript: the sky is calculated in your browser.</p></noscript>
-  <script type="module" src="js/main.js?v=24"></script>
+  <script type="module" src="js/main.js?v=25"></script>
 </body>
 </html>

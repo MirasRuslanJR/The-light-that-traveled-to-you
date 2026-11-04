@@ -198,10 +198,13 @@ export function zonedToUtc(year, month, day, hour, minute, timeZone) {
     return asUtc - Math.floor(ms / 1000) * 1000;
   };
   const wall = Date.UTC(year, month - 1, day, hour, minute);
-  let utc = wall - offsetAt(wall);
-  const second = wall - offsetAt(utc);
-  if (second !== utc) utc = second; // crossed a DST boundary on the first guess
-  return utc;
+  const first = wall - offsetAt(wall);
+  const second = wall - offsetAt(first);
+  if (second === first) return first;
+  // The first guess crossed a clock change. If the second guess reads back as the same wall time, it is the answer.
+  if (wall - offsetAt(second) === second) return second;
+  // Neither reads back: the wall time falls in a spring-forward gap and never existed. Move it forward, as clocks did.
+  return Math.max(first, second);
 }
 
 /** Years (Julian) between two timestamps: the radius of the light sphere in light-years. */
@@ -249,8 +252,22 @@ const MAG = { // Meeus 41, simplified: base + 5 log(r·Δ) + phase terms
   venus: (i) => -4.40 + 0.0009 * i + 0.000239 * i * i - 0.00000065 * i * i * i,
   mars: (i) => -1.52 + 0.016 * i,
   jupiter: (i) => -9.40 + 0.005 * i,
-  saturn: () => -8.88,
+  saturn: (i, B) => -8.68 - 2.60 * Math.abs(Math.sin(B)) + 1.25 * Math.sin(B) ** 2,   // Meeus 41: the rings add light
 };
+
+/**
+ * Tilt B of Saturn's rings toward Earth, radians (Meeus 45), from Saturn's geocentric J2000 equatorial vector.
+ * The ring-plane node is taken in the J2000 frame, so it stays fixed; precession would move both together.
+ */
+export function saturnRingTilt(g, jd) {
+  const T = (jd - J2000) / 36525;
+  const y = Math.cos(EPS_J2000) * g[1] + Math.sin(EPS_J2000) * g[2];
+  const z = -Math.sin(EPS_J2000) * g[1] + Math.cos(EPS_J2000) * g[2];
+  const r = Math.hypot(g[0], y, z);
+  const lam = Math.atan2(y, g[0]), beta = Math.asin(z / r);
+  const inc = (28.075216 - 0.012998 * T) * DEG, node = 169.50847 * DEG;
+  return Math.asin(Math.sin(inc) * Math.cos(beta) * Math.sin(lam - node) - Math.cos(inc) * Math.sin(beta));
+}
 
 /** Geocentric planets: direction (J2000 equatorial unit vector, light-time corrected) and magnitude. */
 export function planets(jd) {
@@ -265,6 +282,7 @@ export function planets(jd) {
     const delta = Math.hypot(...g), r = Math.hypot(...p);
     const cosI = (r * r + delta * delta - R * R) / (2 * r * delta);
     const i = Math.acos(Math.max(-1, Math.min(1, cosI))) / DEG;
-    return { name, dir: [g[0] / delta, g[1] / delta, g[2] / delta], mag: MAG[name](i) + 5 * Math.log10(r * delta), delta };
+    const B = name === 'saturn' ? saturnRingTilt(g, jd) : 0;
+    return { name, dir: [g[0] / delta, g[1] / delta, g[2] / delta], mag: MAG[name](i, B) + 5 * Math.log10(r * delta), delta };
   });
 }

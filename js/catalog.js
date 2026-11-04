@@ -1,5 +1,5 @@
 // Star catalogue: decodes the packed HYG data and answers the light-sphere questions.
-import { STAR_DATA_B64, STAR_COUNT, STAR_FIELDS, STAR_NAMES, MAG_LIMIT, LN_DIST } from './data/stars.js?v=24';
+import { STAR_DATA_B64, STAR_COUNT, STAR_FIELDS, STAR_NAMES, MAG_LIMIT, LN_DIST, UNKNOWN_DIST } from './data/stars.js?v=25';
 
 const PC_PER_LY = 1 / 3.261563777;
 
@@ -47,11 +47,13 @@ export function loadCatalog() {
   }
   const names = new Map(STAR_NAMES.map(([i, name, con, en, conEn]) => [i, { name, con, en, conEn }]));
 
-  // Naked-eye stars ordered by distance, for "how far has the light got" queries.
+  const unknownDist = new Set(UNKNOWN_DIST);
+  // Naked-eye stars ordered by distance, for "how far has the light got" queries. Stars of unknown distance
+  // stay in the sky but out of the counts.
   const visibleByDist = [];
-  for (let i = 0; i < n; i++) if (mag[i] <= MAG_LIMIT && names.has(i)) visibleByDist.push(i);
+  for (let i = 0; i < n; i++) if (mag[i] <= MAG_LIMIT && !unknownDist.has(i)) visibleByDist.push(i);
   visibleByDist.sort((a, b) => dist[a] - dist[b]);
-  const allByDist = Array.from({ length: n }, (_, i) => i).sort((a, b) => dist[a] - dist[b]);
+  const allByDist = Array.from({ length: n }, (_, i) => i).filter((i) => !unknownDist.has(i)).sort((a, b) => dist[a] - dist[b]);
 
   const countWithin = (sorted, r) => {
     let lo = 0, hi = sorted.length;
@@ -85,9 +87,11 @@ export function loadCatalog() {
     },
     /** Declination (J2000) in degrees. */
     dec(i) { return Math.asin(pos[i * 3 + 2] / dist[i]) * 180 / Math.PI; },
-    /** Star name in 'ru' or 'en'. */
     /** A real name (traditional or Bayer/Flamsteed), not just a catalogue number. */
-    isNamed(i) { const e = names.get(i); return !!e && !/^HIP /.test(e.name); },
+    isNamed(i) { const e = names.get(i); return !!e && !/^(HIP|HD|Gl|GJ|NN|Wo) /.test(e.name); },
+    /** False for the few naked-eye stars without a usable parallax (drawn at a nominal distance). */
+    distKnown(i) { return !unknownDist.has(i); },
+    /** Star name in 'ru' or 'en'. */
     label(i, lang = 'ru') {
       const e = names.get(i);
       if (!e) return lang === 'en' ? `Star #${i}` : `Звезда №${i}`;

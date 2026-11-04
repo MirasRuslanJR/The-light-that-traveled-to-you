@@ -3,8 +3,9 @@
   --bg: #04060b;
   --ink: #ece6da;
   --ink-dim: rgba(236, 230, 218, 0.66);
-  --ink-faint: rgba(236, 230, 218, 0.4);
+  --ink-faint: rgba(236, 230, 218, 0.58);
   --line: rgba(236, 230, 218, 0.18);
+  --line-strong: rgba(236, 230, 218, 0.42);
   --gold: #f1d3a1;
   --gold-soft: rgba(241, 211, 161, 0.14);
   --danger: #f0a38f;
@@ -36,6 +37,7 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
+  overflow-x: clip;     /* clip, unlike hidden, never makes body a scroll container (sticky text relies on that) */
 }
 ::selection { background: var(--gold-soft); color: var(--ink); }
 
@@ -69,6 +71,18 @@ body {
   pointer-events: none;
 }
 .topbar > * { pointer-events: auto; }
+.topbar::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 -24px;
+  z-index: -1;
+  background: linear-gradient(rgba(4, 6, 11, 0.5), rgba(4, 6, 11, 0));
+  opacity: 0;
+  transition: opacity 0.8s var(--ease);
+  pointer-events: none;
+}
+.sky-bright .topbar::before { opacity: 1; }
+.sky-bright .topbar, .sky-bright .star-label, .sky-bright .obj-label { text-shadow: 0 0 12px rgba(4, 6, 11, 0.85), 0 0 2px rgba(4, 6, 11, 0.6); }
 .wordmark {
   font-style: italic;
   font-size: 19px;
@@ -196,6 +210,7 @@ body {
   letter-spacing: -0.012em;
   text-wrap: balance;
 }
+#ch-now .display { font-size: clamp(34px, 4.4vw, 64px); }
 .display--star { font-size: var(--t-star); font-style: italic; color: var(--gold); line-height: 0.95; }
 .lead { margin: 0; max-width: 34em; color: var(--ink-dim); text-wrap: pretty; }
 .lead em { color: var(--ink); font-style: italic; }
@@ -216,9 +231,9 @@ body {
 .life-age-unit { color: var(--ink-dim); font-size: 19px; }
 .life-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s1); min-height: 132px; justify-content: flex-end; }
 .life-log li { display: flex; align-items: baseline; gap: var(--s2); color: var(--ink-dim); transition: opacity 0.6s var(--ease); }
-.life-log li:nth-child(2) { opacity: 0.7; }
-.life-log li:nth-child(3) { opacity: 0.45; }
-.life-log li:nth-child(4) { opacity: 0.25; }
+.life-log li:nth-child(2) { opacity: 0.8; }
+.life-log li:nth-child(3) { opacity: 0.65; }
+.life-log li:nth-child(4) { opacity: 0.5; }
 .life-log li:first-child .life-star { color: var(--ink); }
 .life-when { color: var(--ink-faint); min-width: 9.5em; }
 .life-star { font-style: italic; font-size: 21px; }
@@ -266,7 +281,9 @@ body {
 .future-end, .future-actions { opacity: 0; transform: translateY(12px); transition: opacity 1.2s var(--ease), transform 1.4s var(--ease); }
 .future.is-done .future-end, .future.is-done .future-actions { opacity: 1; transform: none; }
 .future-end { margin-top: var(--s3); font-style: italic; color: var(--ink); }
-.in-future #ch-now .chapter-text, .in-future .rail, .in-future .scroll-hint { opacity: 0 !important; pointer-events: none; transition: opacity 0.6s var(--ease); }
+.in-future #ch-now .chapter-text, .in-future .rail, .in-future .scroll-hint, .in-future .colophon { opacity: 0 !important; pointer-events: none; transition: opacity 0.6s var(--ease); }
+/* Locks the viewport only; the gutter keeps the width, so the sky does not jump sideways. */
+html.no-scroll { overflow: hidden; scrollbar-gutter: stable; }
 
 /* Chapter rail */
 .rail {
@@ -298,7 +315,7 @@ body {
   cursor: pointer;
 }
 .rail button span { opacity: 0; transform: translateX(6px); transition: opacity 0.4s var(--ease), transform 0.5s var(--ease); }
-.rail:hover button span, .rail button.is-active span { opacity: 1; transform: none; }
+.rail:hover button span, .rail button.is-active span, .rail button:focus-visible span { opacity: 1; transform: none; }
 .rail button i { display: block; width: 16px; height: 1px; background: currentColor; transition: width 0.5s var(--ease), background-color 0.4s var(--ease); }
 .rail button.is-active { color: var(--ink); }
 .rail button.is-active i { width: 32px; background: var(--gold); }
@@ -366,9 +383,10 @@ body:not(.op-gate) .gate .gate-actions { pointer-events: none; }
 }
 body:not(.op-done) .topbar .wordmark, body:not(.op-done) .topbar-meta, body:not(.op-done) .sound-toggle { opacity: 0; pointer-events: none; }
 body:not(.op-title) #intro .eyebrow { opacity: 0; transform: translateY(12px); }
-body:not(.op-form) #intro .lead, body:not(.op-form) #intro .birth, body:not(.op-form) #intro .privacy { opacity: 0; transform: translateY(14px); pointer-events: none; }
+body:not(.op-form) #intro .lead, body:not(.op-form) #intro .birth, body:not(.op-form) #intro .privacy, body:not(.op-form) #intro .credit { opacity: 0; transform: translateY(14px); pointer-events: none; }
 #intro .birth { transition-delay: 0.15s; }
-#intro .privacy { transition-delay: 0.35s; }
+#intro .privacy, #intro .credit { transition-delay: 0.35s; }
+.credit { margin-top: var(--s1); font-size: 10px; }
 body:not(.op-title) #intro .w { opacity: 0 !important; filter: blur(8px) !important; transform: translateY(0.16em) !important; }
 body.op-gate #intro .chapter-text::before { opacity: 0; }
 
@@ -455,7 +473,7 @@ body.can-drag .cta, body.can-drag button { cursor: pointer; }
   min-height: 48px;
   padding: var(--s1) 0;
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
   border-radius: 0;
   background: transparent;
   color: var(--ink);
@@ -548,6 +566,7 @@ body.can-drag .cta, body.can-drag button { cursor: pointer; }
 }
 .star-label .star-name { font-style: italic; font-size: 22px; color: var(--ink); line-height: 1.1; margin-top: -20px; }
 .star-label .star-meta { grid-column: 2; font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); }
+.star-label.is-flipped .star-name, .star-label.is-flipped .star-meta { text-align: right; transform: translateX(calc(-100% - 72px)); }
 .star-label--sun .ring { width: 24px; height: 24px; margin: -12px 0 0 -12px; border-color: rgba(236, 230, 218, 0.45); }
 .star-label--sun .star-name { font-size: 18px; margin-top: -12px; }
 
@@ -617,6 +636,13 @@ body.can-drag .cta, body.can-drag button { cursor: pointer; }
   .chapter--intro .chapter-text { justify-content: flex-end; }
   .counter { flex-direction: column; gap: var(--s1); }
   .star-label .star-name { font-size: 19px; }
+  .scroll-hint { display: none; }
+}
+@media (max-height: 500px) {
+  .chapter-text { min-height: 0; padding-top: var(--s8); padding-bottom: var(--s4); }
+  .chapter--intro .chapter-text { min-height: 100vh; }
+  .display { font-size: clamp(28px, 4.2vw, 48px); }
+  .display--star { font-size: clamp(40px, 7vw, 72px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

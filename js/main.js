@@ -1,12 +1,12 @@
 // Story controller: turns scroll position into a camera path through real space and time.
-import * as A from './astro.js?v=24';
-import { loadCatalog } from './catalog.js?v=24';
-import { createSky } from './sky.js?v=24';
-import { PLACES, findPlace, guessPlace, placeName } from './places.js?v=24';
-import { STATIC, PHRASES, LANGS, detectLang, saveLang } from './i18n.js?v=24';
-import * as F from './format.js?v=24';
-import { createAudio } from './audio.js?v=24';
-import { LINES } from './data/lines.js?v=24';
+import * as A from './astro.js?v=25';
+import { loadCatalog } from './catalog.js?v=25';
+import { createSky } from './sky.js?v=25';
+import { PLACES, findPlace, guessPlace, placeName } from './places.js?v=25';
+import { STATIC, PHRASES, LANGS, detectLang, saveLang } from './i18n.js?v=25';
+import * as F from './format.js?v=25';
+import { createAudio } from './audio.js?v=25';
+import { LINES } from './data/lines.js?v=25';
 
 const $ = (s) => document.querySelector(s);
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1187,10 +1187,11 @@ function placeTooltip(now) {
   } else {
     text = L.tipSeen(nowYear - dist, dist);
   }
+  if (!catalog.distKnown(i)) text = L.tipUnknown;
   tipEl.querySelector('.tip-name').textContent = catalog.names.has(i) ? catalog.label(i, lang) : L.unnamedStar;
   tipEl.lastElementChild.style.maxWidth = `${Math.min(300, viewW() - 64)}px`;
   const con = catalog.constellation(i, lang);
-  tipEl.querySelector('.tip-meta').textContent = L.tipDist(dist) + (con ? ` · ${L.tipCon(con)}` : '');
+  tipEl.querySelector('.tip-meta').textContent = (catalog.distKnown(i) ? L.tipDist(dist) : L.tipDistUnknown) + (con ? ` · ${L.tipCon(con)}` : '');
   tipEl.querySelector('.tip-text').textContent = text;
 }
 const hintEl = $('#scroll-hint');
