@@ -1,6 +1,6 @@
 // Two languages. STATIC holds the page's fixed copy (keyed by data-i18n attributes in index.html);
 // PHRASES builds the story's sentences, which depend on the computed sky.
-import * as F from './format.js?v=23';
+import * as F from './format.js?v=24';
 
 export const LANGS = ['ru', 'en'];
 
@@ -157,12 +157,16 @@ export const PHRASES = {
     },
     pulseMeta: (n) => `Свет Земли · ускорено в ${n} млн раз`,
     tipDist(d) { return `${this.dec(d, d < 10 ? 2 : 1)} св. лет`; },
-    tipSeen: (y) => (y > 0 ? `Свет, который ты сейчас видишь, ушёл от неё в ${y} году.` : 'Свет, который ты сейчас видишь, ушёл от неё ещё до нашей эры.'),
+    tipSeen: (y, d = 0) => { const r = d > 500 ? 50 : d > 150 ? 10 : 1; const yy = Math.round(y / r) * r; return yy > 0 ? `Свет, который ты сейчас видишь, ушёл от неё ${r > 1 ? 'около ' : 'в '}${yy} года`.replace('в ' + yy + ' года', 'в ' + yy + ' году') + '.' : 'Свет, который ты сейчас видишь, ушёл от неё ещё до нашей эры.'; },
     tipReached: (y, age) => `Твой свет достиг её в ${y} году — тебе было ${age}.`,
     tipWill: (when, age) => `Твой свет коснётся её ${when} — тебе будет ${age}.`,
     tipFar: (y) => `Твой свет доберётся до неё только в ${y} году.`,
     tipCon: (c) => `созвездие ${c}`,
     unnamedStar: 'Звезда без имени',
+    twilightBirth: (rest) => `Были сумерки, и на небе проступали первые звёзды. ${rest}`,
+    nowUpDay(name, dir) { return `${name} сейчас над горизонтом, ${dir}, но её скрывает дневной свет. Найди её после заката — свет твоего рождения уже летит к ней.`; },
+    youngAge: (days) => (days < 30.4 ? { num: String(Math.max(1, Math.round(days))), unit: F.plural(Math.max(1, Math.round(days)), 'день', 'дня', 'дней') } : { num: String(Math.floor(days / 30.44)), unit: F.plural(Math.floor(days / 30.44), 'месяц', 'месяца', 'месяцев') }),
+    coord: (lat, lon) => `${Math.abs(lat).toFixed(2).replace('.', ',')}° ${lat >= 0 ? 'с. ш.' : 'ю. ш.'} · ${Math.abs(lon).toFixed(2).replace('.', ',')}° ${lon >= 0 ? 'в. д.' : 'з. д.'}`,
     postNext: (name, when) => `Следующая — ${name}, ${when}`,
     futureAge: (n) => `тебе ${n}`,
     postAge: (n) => `${n} ${F.plural(n, 'год', 'года', 'лет')}`,
@@ -230,12 +234,16 @@ export const PHRASES = {
     },
     pulseMeta: (n) => `Earth’s light · sped up ${n} million times`,
     tipDist(d) { return `${this.dec(d, d < 10 ? 2 : 1)} light‑years`; },
-    tipSeen: (y) => (y > 0 ? `The light you see now left it in ${y}.` : 'The light you see now left it before the Common Era.'),
+    tipSeen: (y, d = 0) => { const r = d > 500 ? 50 : d > 150 ? 10 : 1; const yy = Math.round(y / r) * r; return yy > 0 ? `The light you see now left it ${r > 1 ? 'around' : 'in'} ${yy}.` : 'The light you see now left it before the Common Era.'; },
     tipReached: (y, age) => `Your light reached it in ${y}, when you were ${age}.`,
     tipWill: (when, age) => `Your light will reach it ${when}, when you are ${age}.`,
     tipFar: (y) => `Your light will only get there in ${y}.`,
     tipCon: (c) => `in ${c}`,
     unnamedStar: 'Unnamed star',
+    twilightBirth: (rest) => `It was twilight, and the first stars were coming out. ${rest}`,
+    nowUpDay: (name, dir) => `${name} is above the horizon right now, ${dir}, hidden by daylight. Look for it after dark — the light of your birth is on its way to it.`,
+    youngAge: (days) => (days < 30.4 ? { num: String(Math.max(1, Math.round(days))), unit: Math.round(days) <= 1 ? 'day old' : 'days old' } : { num: String(Math.floor(days / 30.44)), unit: Math.floor(days / 30.44) === 1 ? 'month old' : 'months old' }),
+    coord: (lat, lon) => `${Math.abs(lat).toFixed(2)}° ${lat >= 0 ? 'N' : 'S'} · ${Math.abs(lon).toFixed(2)}° ${lon >= 0 ? 'E' : 'W'}`,
     postNext: (name, when) => `Next: ${name}, ${when}`,
     futureAge: (n) => `you'll be ${n}`,
     postAge: (n) => `age ${n}`,

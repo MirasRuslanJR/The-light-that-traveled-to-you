@@ -1,12 +1,12 @@
 // Story controller: turns scroll position into a camera path through real space and time.
-import * as A from './astro.js?v=23';
-import { loadCatalog } from './catalog.js?v=23';
-import { createSky } from './sky.js?v=23';
-import { PLACES, findPlace, guessPlace, placeName } from './places.js?v=23';
-import { STATIC, PHRASES, detectLang, saveLang } from './i18n.js?v=23';
-import * as F from './format.js?v=23';
-import { createAudio } from './audio.js?v=23';
-import { LINES } from './data/lines.js?v=23';
+import * as A from './astro.js?v=24';
+import { loadCatalog } from './catalog.js?v=24';
+import { createSky } from './sky.js?v=24';
+import { PLACES, findPlace, guessPlace, placeName } from './places.js?v=24';
+import { STATIC, PHRASES, LANGS, detectLang, saveLang } from './i18n.js?v=24';
+import * as F from './format.js?v=24';
+import { createAudio } from './audio.js?v=24';
+import { LINES } from './data/lines.js?v=24';
 
 const $ = (s) => document.querySelector(s);
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -32,6 +32,9 @@ function rotateAbout(v, axis, ang) { // Rodrigues
   const c = Math.cos(ang), s = Math.sin(ang);
   return add(add(mul(v, c), mul(cross(axis, v), s)), mul(axis, dot(axis, v) * (1 - c)));
 }
+/** Size of the drawing surface in CSS px. window.innerWidth includes a classic scrollbar; the canvas does not. */
+const viewW = () => (sky && sky.gl.canvas.clientWidth) || document.documentElement.clientWidth || window.innerWidth;
+const viewH = () => (sky && sky.gl.canvas.clientHeight) || window.innerHeight;
 const asinDeg = (x) => Math.asin(Math.max(-1, Math.min(1, x))) * 180 / Math.PI;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -50,7 +53,9 @@ function earthFrame(jd, lat, lon, lstOverrideDeg = null) {
   }
   const zen = mulT(P, b.zenith), east = mulT(P, b.east), north = mulT(P, b.north);
   const sun = norm(mulT(P, A.sunVector(jd)));
-  const moon = norm(mulT(P, A.moonVector(jd)));
+  // Seen from the surface, not Earth's centre: the Moon is ~60 Earth radii away, so standing one radius
+  // off-centre shifts it by up to a degree (Meeus ch. 40).
+  const moon = norm(sub(mul(norm(mulT(P, A.moonVector(jd))), 60.27), zen));
   const sunAlt = asinDeg(dot(sun, zen));
   const moonAlt = asinDeg(dot(moon, zen));
   const phase = A.moonPhase(jd);
@@ -111,6 +116,10 @@ try { sky = createSky($('#sky'), catalog, LINES); } catch (err) {
   console.warn('Sky renderer unavailable:', err);
 }
 
+const skyCanvas = $('#sky');
+skyCanvas.addEventListener('webglcontextrestored', () => {
+  try { sky = createSky(skyCanvas, catalog, LINES); if (qualityLevel > 0) applyQuality(qualityLevel); } catch (err) { console.warn('Sky could not be restored:', err); }
+});
 const here = guessPlace();
 let nowFrame = earthFrame(A.julianDay(Date.now()), here.lat, here.lon);
 setInterval(() => { nowFrame = earthFrame(A.julianDay(Date.now()), here.lat, here.lon); }, 60000);
@@ -121,7 +130,11 @@ const audio = createAudio();
 const soundBtn = $('#sound');
 function readPref() { try { return localStorage.getItem('svet-sound') !== 'off'; } catch { return true; } }
 function writePref(on) { try { localStorage.setItem('svet-sound', on ? 'on' : 'off'); } catch { /* private mode */ } }
-function showSound(on) { soundBtn.setAttribute('aria-pressed', String(on)); soundBtn.lastElementChild.textContent = on ? tr('soundOn') : tr('soundOff'); }
+function showSound(on) {
+  soundBtn.setAttribute('aria-pressed', String(on));
+  soundBtn.setAttribute('aria-label', tr('soundOn'));
+  soundBtn.lastElementChild.textContent = on ? tr('soundOn') : tr('soundOff');
+}
 let soundOn = readPref();
 audio.setEnabled(soundOn);
 showSound(soundOn);
@@ -129,7 +142,7 @@ soundBtn.addEventListener('click', () => {
   soundOn = !soundOn;
   writePref(soundOn); showSound(soundOn);
   audio.setEnabled(soundOn);
-  if (soundOn && S.ready) audio.start();
+  if (soundOn && opening.phase !== 'gate') audio.start();
 });
 
 /** Wrap each word of a headline so it can arrive on its own. Non-breaking spaces stay inside words. */
@@ -161,14 +174,17 @@ function applyStatic() {
   showSound(soundOn);
 }
 
-function setLang(next) {
-  if (next === lang) return;
+function setLang(next, { save = true } = {}) {
+  if (next === lang || !LANGS.includes(next)) return;
   lang = next; L = PHRASES[lang];
-  saveLang(lang);
+  if (save) saveLang(lang);
   applyStatic();
   fillDatalist();
   if (S.ready) fillTexts(S.story);
-  lastFrame = null; metaKey = '';
+  lastFrame = null; metaKey = ''; tipKey = '';
+  F_STATE.shown = -1;                          // the finale's log is rebuilt in the new language
+  if (gateEl.classList.contains('is-ready')) gateEl.querySelector('.gate-count-num').textContent = L.num(catalog.n);
+  $('#share-note').textContent = '';
   if (errEl.textContent) errEl.textContent = '';
 }
 document.querySelectorAll('.lang-switch [data-lang]').forEach((b) => b.addEventListener('click', () => setLang(b.dataset.lang)));
@@ -199,8 +215,8 @@ function readScroll() {
       const fadeOut = 0;
       o = fadeIn * (1 - fadeOut);
     }
-    m.el.firstElementChild.style.setProperty('--o', o.toFixed(3));
-    m.el.firstElementChild.style.visibility = o < 0.01 ? 'hidden' : 'visible';
+    const os = o.toFixed(3);
+    if (m.o !== os) { m.o = os; m.el.firstElementChild.style.setProperty('--o', os); }
     m.el.classList.toggle('is-in', o > 0.35);
   });
   return T;
@@ -208,14 +224,14 @@ function readScroll() {
 
 // ---------- the story ----------
 /**
- * The star shown as "next": the nearest one ahead of the light front that the viewer can actually see
- * from where they live (it rises at least 10° high) and that has a readable name. Every candidate is a
- * real naked-eye star ahead of the light, so whichever is chosen, the dates on screen stay true.
+ * The star shown as "next": among naked-eye stars ahead of the light front, a bright named one that rises at
+ * least 20° over where the viewer lives (preferred within 3 ly of the very nearest). Every candidate is a real
+ * star ahead of the light, so whichever is chosen, its dates stay true; the copy calls it "the next star", not "the nearest".
  */
 function pickHero(R) {
   const list = catalog.upcoming(R, 60);
   const rises = (i) => 90 - Math.abs(here.lat - catalog.dec(i)) >= 20;
-  const named = (i) => !/^HIP /.test(catalog.label(i));
+  const named = (i) => catalog.isNamed(i);
   const bright = (i) => catalog.mag[i] <= 5.5;
   const first = list[0];
   const best = list.find((i) => rises(i) && named(i) && bright(i) && catalog.dist[i] - catalog.dist[first] < 3)
@@ -260,7 +276,7 @@ function computeStory(birthMs, place, timeKnown) {
   // "Your life in stars": the brightest named stars the light has touched, in the order it touched them.
   // Only stars that rise over the birthplace: this is the sky that person could actually look up at.
   const risesThere = (i) => 90 - Math.abs(place.lat - catalog.dec(i)) >= 10;
-  const touched = catalog.between(0, R).filter((i) => catalog.mag[i] <= 4.2 && !/^HIP /.test(catalog.label(i)) && risesThere(i));
+  const touched = catalog.between(0, R).filter((i) => catalog.mag[i] <= 4.2 && catalog.isNamed(i) && risesThere(i));
   touched.sort((a, b) => catalog.mag[a] - catalog.mag[b]);
   const milestones = touched.slice(0, 16).sort((a, b) => catalog.dist[a] - catalog.dist[b]).map((i) => ({
     i, dist: catalog.dist[i], at: A.arrivalMs(birthMs, catalog.dist[i]),
@@ -275,6 +291,15 @@ function computeStory(birthMs, place, timeKnown) {
   };
 }
 
+/** Age in whole calendar years on a given date (in the birthplace's time zone). */
+function calendarAge(birthMs, atMs, tz) {
+  const a = F.parts(birthMs, tz), b = F.parts(atMs, tz);
+  let y = b.year - a.year;
+  if (b.month < a.month || (b.month === a.month && b.day < a.day)) y--;
+  return Math.max(0, y);
+}
+const ageAt = (m) => calendarAge(S.story.birthMs, m.at, S.story.place.tz);
+
 function fillTexts(s) {
   const fill = (key, html) => document.querySelectorAll(`[data-fill="${key}"]`).forEach((el) => {
     el.innerHTML = html;
@@ -288,7 +313,8 @@ function fillTexts(s) {
   let night = L.moonSentence(s.birth.phase, s.birth.moonAlt > 0);
   const brightest = brightestPoint(s.birth);
   if (brightest) night += L.brightest(brightest);
-  if (s.birth.sunAlt > -4) night = L.daytime(night);
+  if (s.birth.sunAlt > -0.83) night = L.daytime(night);               // the Sun's upper limb above the horizon
+  else if (s.birth.sunAlt > -8) night = L.twilightBirth(night);
   if (!s.timeKnown) night += L.noTime;
   if (s.place.approximate) night += L.approx;
   else if (s.place.guessed) night += L.guessed;
@@ -305,14 +331,16 @@ function fillTexts(s) {
   const sameMonth = L.monthYear(arrival, here.tz) === L.monthYear(s.nowMs, here.tz);
   const when = `<strong>${sameMonth ? L.thisMonth : L.monthYear(arrival, here.tz)}</strong>`;
   let heroText = gap < 0 ? L.heroPassed : gap < 0.25 ? L.heroNow(when) : L.heroOnWay(gap, when);
-  if (gap >= 0) heroText += L.heroAge(Math.floor(s.heroDist));
+  if (gap >= 0) heroText += L.heroAge(calendarAge(s.birthMs, arrival, s.place.tz));
   fill('heroText', heroText);
   fill('heroMeta', L.heroMeta(s.heroDist, esc(catalog.constellation(s.hero, lang))));
 
   const nights = Math.floor((s.nowMs - s.birthMs) / 86400000);
   fill('nowLine', `${L.longDate(s.nowMs, here.tz)} · ${L.today}`);
   fill('nightsText', L.nights(nights));
-  fill('nowText', s.heroAltNow > 2 ? L.nowUp(heroName, L.compass(s.heroAzNow)) : L.nowDown(heroName));
+  fill('nowText', s.heroAltNow > 2
+    ? (s.now.sunAlt > -6 ? L.nowUpDay(heroName, L.compass(s.heroAzNow)) : L.nowUp(heroName, L.compass(s.heroAzNow)))
+    : L.nowDown(heroName));
 
   lifeKey = '';
 }
@@ -323,24 +351,26 @@ let lifeKey = '', lifeShown = 0;
 function updateLife(R) {
   const s = S.story;
   if (!s) return;
-  const age = Math.floor(R + 1e-6);
+  const yearMs = 365.25 * 86400000;
+  const age = calendarAge(s.birthMs, s.birthMs + R * yearMs, s.place.tz);
+  const young = s.R < 1 ? L.youngAge(R * 365.25) : null;   // a baby's light is days or months old, not "0 years"
   const done = s.milestones.filter((m) => m.dist <= R);
   const counts = catalog.reached(R);
-  const key = `${age}|${done.length}|${counts.visible}|${lang}`;
+  const key = `${young ? young.num + young.unit : age}|${done.length}|${counts.visible}|${lang}`;
   if (key === lifeKey) return;
   lifeKey = key;
-  lifeAgeEl.textContent = L.num(age);
-  lifeUnitEl.textContent = L.years(age);
+  lifeAgeEl.textContent = young ? young.num : L.num(age);
+  lifeUnitEl.textContent = young ? young.unit : L.years(age);
   const fresh = done.length > lifeShown;
   lifeShown = done.length;
   lifeLogEl.replaceChildren(...done.slice(-4).reverse().map((m, k) => {
     const li = document.createElement('li');
     if (k === 0 && fresh) li.className = 'is-new';
     const year = F.parts(m.at, here.tz).year;
-    li.innerHTML = `<span class="life-when mono">${year} · ${L.logAge(Math.floor(m.dist))}</span><span class="life-star">${esc(catalog.label(m.i, lang))}</span>`;
+    li.innerHTML = `<span class="life-when mono">${year} · ${L.logAge(ageAt(m))}</span><span class="life-star">${esc(catalog.label(m.i, lang))}</span>`;
     return li;
   }));
-  lifeSummaryEl.textContent = L.summary(counts.visible, counts.all - counts.visible);
+  lifeSummaryEl.textContent = R >= Math.min(0.5, s.R * 0.9) ? L.summary(counts.visible, counts.all - counts.visible) : '';
 }
 
 // Names that light up on the 3D stars at the moment the light front touches them.
@@ -359,11 +389,12 @@ function placeMilestoneLabels(sc) {
   msPool.forEach((el, k) => {
     const m = live[k];
     const p0 = m ? sky.project(m.pos) : null;
-    const p = p0 && (window.innerWidth >= 900 || p0.y < window.innerHeight * 0.45) ? p0 : null;
+    const p = p0 && clearOfTextAt(p0) ? p0 : null;
     el.classList.toggle('is-on', !!p);
     if (!p) return;
     el.style.transform = `translate3d(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px, 0)`;
-    const name = catalog.label(m.i, lang), meta = L.logAge(Math.floor(m.dist));
+    el.classList.toggle('is-flipped', p.x > viewW() - 170);
+    const name = catalog.label(m.i, lang), meta = L.logAge(ageAt(m));
     if (el.children[1].textContent !== name) el.children[1].textContent = name;
     if (el.children[2].textContent !== meta) el.children[2].textContent = meta;
   });
@@ -387,7 +418,7 @@ function namedObjects(f) {
   const out = [];
   if (f.moonAlt > 1) out.push({ name: L.moonName, dir: f.moon, meta: '' });
   for (const p of f.planets) if (p.alt > 2 && p.mag < 2.2) out.push({ name: L.planet[p.name], dir: p.dir, meta: L.planetWord });
-  for (const i of BRIGHT) if (catalog.mag[i] < 1.3) out.push({ name: catalog.label(i, lang), dir: starDir(i), meta: '' });
+  for (const i of BRIGHT) if (catalog.mag[i] < 1.3 && asinDeg(dot(starDir(i), f.zen)) > 2) out.push({ name: catalog.label(i, lang), dir: starDir(i), meta: '' });
   return out;
 }
 
@@ -423,7 +454,7 @@ function sceneStory(T, t) {
     cam = blendCam(introCam(t), land, k);
     const earth = smooth((k - 0.78) / 0.22);
     const e = envFromFrame(f);
-    const sunHide = f.sunAlt > -4 ? smooth((T - 1.3) / 0.35) : 0;   // "remove the Sun" to reveal the stars
+    const sunHide = f.sunAlt > -4 ? smooth((T - 1.08) / 0.3) : 0;   // "remove the Sun" to reveal the stars
     e.day *= 1 - sunHide; e.twilight *= 1 - sunHide * 0.8;
     e.moonOn *= earth;
     env = { ...e, earth, sphereR: 0, sphereOn: 0, ...pulses, pulse: 1 - smooth(k / 0.55), lines: smooth((T - 0.9) / 0.12) };
@@ -447,7 +478,7 @@ function sceneStory(T, t) {
     Rshow = s.R * clamp01((T - 2.3) / 0.6);
     cam = camA;
     env = { ...e, earth, sphereR: Rshow, sphereOn: 1 - earth * 0.999, lines: 1 };
-    if (T < 2.15) frameOnScreen = s.birth;
+    if (T < 2.03) frameOnScreen = s.birth;          // labels follow directions: only valid before the camera moves
     labelSun = smooth((k - 0.55) / 0.3);
 
     if (T >= 3) {
@@ -488,7 +519,7 @@ function startFuture() {
   const t = performance.now() / 1000;
   const from = s.R, to = Math.max(100, s.R + 25);
   const risesThere = (i) => 90 - Math.abs(s.place.lat - catalog.dec(i)) >= 10;
-  const ahead = catalog.between(from, to).filter((i) => catalog.mag[i] <= 4.3 && !/^HIP /.test(catalog.label(i)) && risesThere(i));
+  const ahead = catalog.between(from, to).filter((i) => catalog.mag[i] <= 4.3 && catalog.isNamed(i) && risesThere(i));
   ahead.sort((a, b) => catalog.mag[a] - catalog.mag[b]);
   const pick = ahead.slice(0, 14);
   if (!pick.includes(s.hero)) pick.push(s.hero);
@@ -499,18 +530,25 @@ function startFuture() {
   Object.assign(F_STATE, { on: true, t0: t, exitT: 0, from, to, list, bellDone: false, shown: -1, endShown: false });
   prevR = from;
   body.classList.add('in-future');
+  document.documentElement.classList.add('no-scroll');
   futureEl.hidden = false;
   futureEl.classList.remove('is-done');
   $('#future-log').replaceChildren();
+  $('#ch-now').inert = true;
+  futureEl.focus({ preventScroll: true });
 }
 function stopFuture() {
   if (!F_STATE.on || F_STATE.exitT) return;
   F_STATE.exitT = performance.now() / 1000;
   body.classList.remove('in-future');
+  document.documentElement.classList.remove('no-scroll');
+  $('#ch-now').inert = false;
+  $('#future-go').focus({ preventScroll: true });
 }
 const futureR = (t) => {
   const k = clamp01((t - F_STATE.t0 - 0.8) / FUTURE_DUR);
-  const e = k < 0.08 ? (k * k) / 0.16 : k > 0.92 ? 1 - ((1 - k) * (1 - k)) / 0.16 : k;   // gentle start and landing
+  const a = 0.08, w = 2 * a * (1 - a);                     // gentle start and landing, linear middle, no jumps
+  const e = k < a ? (k * k) / w : k > 1 - a ? 1 - ((1 - k) * (1 - k)) / w : (k - a / 2) / (1 - a);
   return lerp(F_STATE.from, F_STATE.to, e);
 };
 function futureScene(t, base) {
@@ -548,8 +586,9 @@ const futureEl = $('#future');
 function updateFuture(t) {
   if (!F_STATE.on || F_STATE.exitT) return;
   const s = S.story, R = S.Rfuture ?? F_STATE.from;
-  const year = F.parts(s.birthMs + R * 365.25 * 86400000, here.tz).year;
-  const age = Math.floor(R + 1e-6);
+  const nowAt = s.birthMs + R * 365.25 * 86400000;
+  const year = F.parts(nowAt, s.place.tz).year;
+  const age = calendarAge(s.birthMs, nowAt, s.place.tz);
   $('#future-year').textContent = String(year);
   $('#future-age').textContent = L.futureAge(age);
   const done = F_STATE.list.filter((m) => m.dist <= R);
@@ -559,7 +598,7 @@ function updateFuture(t) {
     $('#future-log').replaceChildren(...done.slice(-4).reverse().map((m, k) => {
       const li = document.createElement('li');
       if (k === 0 && fresh) li.className = 'is-new';
-      li.innerHTML = `<span class="life-when mono">${F.parts(m.at, here.tz).year} · ${esc(L.futureAge(Math.floor(m.dist)))}</span><span class="life-star">${esc(catalog.label(m.i, lang))}</span>`;
+      li.innerHTML = `<span class="life-when mono">${F.parts(m.at, s.place.tz).year} · ${esc(L.futureAge(ageAt(m)))}</span><span class="life-star">${esc(catalog.label(m.i, lang))}</span>`;
       return li;
     }));
   }
@@ -567,7 +606,7 @@ function updateFuture(t) {
   if (!F_STATE.endShown && t - F_STATE.t0 > FUTURE_DUR + 1.2) { F_STATE.endShown = true; futureEl.classList.add('is-done'); }
 }
 // Future stars light up with their names at the moment the light reaches them.
-const clearOfTextAt = (p) => (window.innerWidth >= 900 ? p.x > window.innerWidth * 0.5 : p.y < window.innerHeight * 0.45);
+const clearOfTextAt = (p) => (viewW() >= 900 ? p.x > viewW() * 0.5 && p.x < viewW() - 230 : p.y < viewH() * 0.38);
 function placeFutureLabels() {
   const R = S.Rfuture ?? 0;
   const live = F_STATE.on && !F_STATE.exitT ? F_STATE.list.filter((m) => R - m.dist >= 0 && R - m.dist < Math.max(3, R * 0.06)).slice(-3) : [];
@@ -578,7 +617,8 @@ function placeFutureLabels() {
     el.classList.toggle('is-on', !!p);
     if (!p) return;
     el.style.transform = `translate3d(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px, 0)`;
-    const name = catalog.label(m.i, lang), meta = L.futureAge(Math.floor(m.dist));
+    el.classList.toggle('is-flipped', p.x > viewW() - 170);
+    const name = catalog.label(m.i, lang), meta = L.futureAge(ageAt(m));
     if (el.children[1].textContent !== name) el.children[1].textContent = name;
     if (el.children[2].textContent !== meta) el.children[2].textContent = meta;
   });
@@ -588,18 +628,28 @@ $('#future-back').addEventListener('click', stopFuture);
 $('#future-postcard').addEventListener('click', () => { makePostcard().catch((err) => console.warn('postcard failed', err)); });
 window.addEventListener('wheel', () => { if (F_STATE.on && performance.now() / 1000 - F_STATE.t0 > 1) stopFuture(); }, { passive: true });
 window.addEventListener('keydown', (e) => { if (F_STATE.on && e.key === 'Escape') stopFuture(); });
+// On phones a vertical swipe leaves the finale (the page itself is locked while it plays).
+let swipeY = null;
+window.addEventListener('touchstart', (e) => { swipeY = F_STATE.on ? e.touches[0].clientY : null; }, { passive: true });
+window.addEventListener('touchmove', (e) => {
+  if (swipeY == null || !F_STATE.on || e.target.closest('#future .actions')) return;
+  if (Math.abs(e.touches[0].clientY - swipeY) > 40 && performance.now() / 1000 - F_STATE.t0 > 1) { swipeY = null; stopFuture(); }
+}, { passive: true });
 
 // ---------- labels ----------
 const heroLabel = $('#label-hero');
 const sunLabel = $('#label-sun');
 function placeLabel(el, p, on) {
   const pt = on > 0.01 && sky ? sky.project(p) : null;
-  const W = window.innerWidth, H = window.innerHeight;
-  // Never sit on top of the text column (left half on desktop, lower half on phones).
-  const clearOfText = !pt || (W >= 900 ? pt.x > W * 0.5 : pt.y < H * 0.45);
-  const visible = !!pt && clearOfText && pt.x > -50 && pt.y > -50 && pt.x < W + 50 && pt.y < H + 50;
+  const W = viewW(), H = viewH();
+  // Never sit on top of the text column (left half on desktop, upper part only on phones) or the rail.
+  const clearOfText = !pt || clearOfTextAt(pt);
+  const visible = !!pt && clearOfText && pt.x > 10 && pt.y > 60 && pt.x < W - 10 && pt.y < H - 30;
   el.classList.toggle('is-on', visible && on > 0.5);
-  if (pt) el.style.transform = `translate3d(${pt.x.toFixed(1)}px, ${pt.y.toFixed(1)}px, 0)`;
+  if (pt) {
+    el.style.transform = `translate3d(${pt.x.toFixed(1)}px, ${pt.y.toFixed(1)}px, 0)`;
+    el.classList.toggle('is-flipped', pt.x > W - 170);
+  }
 }
 
 // Small names for the Moon, planets and brightest stars while standing on Earth.
@@ -614,14 +664,15 @@ const objPool = Array.from({ length: 6 }, () => {
 let lastFrame = null, lastObjects = [];
 function placeObjectLabels(sc) {
   if (sc.frame !== lastFrame) { lastFrame = sc.frame; lastObjects = sc.frame ? namedObjects(sc.frame) : []; }
-  const W = window.innerWidth, H = window.innerHeight;
+  if ((sc.env.earth ?? 1) < 0.97) lastObjects = [];     // names are on directions: only valid with the camera on Earth
+  const W = viewW(), H = viewH();
   const minX = W >= 900 ? W * 0.5 : 0;   // keep clear of the text column
   const shown = [];
   for (const o of lastObjects) {
     if (shown.length >= objPool.length) break;
     const p = sky.project(o.dir);
-    const maxY = W >= 900 ? H - 40 : H * 0.42;   // on phones the text fills the lower half
-    if (!p || p.x < minX || p.x > W - 120 || p.y < 70 || p.y > maxY) continue;
+    const maxY = W >= 900 ? H - 40 : H * 0.36;   // on phones the text fills the lower part
+    if (!p || p.x < minX || p.x > W - (W >= 900 ? 250 : 120) || p.y < 70 || p.y > maxY) continue;
     if (shown.some((q) => Math.abs(q.p.x - p.x) < 110 && Math.abs(q.p.y - p.y) < 28)) continue;
     shown.push({ o, p });
   }
@@ -661,22 +712,23 @@ function updateMeta(T) {
   const s = S.story;
   let key, text;
   if (!S.ready || idx === 0) { key = 'pulse'; text = L.pulseMeta(SPEEDUP_MILLIONS); }
-  else if (idx === 1) { key = 'birth'; text = `${F.coord(s.place.lat, s.place.lon)} · ${L.longDate(s.birthMs, s.place.tz)}`; }
-  else if (idx === 4) { key = 'home'; text = `${F.coord(here.lat, here.lon)} · ${L.today}`; }
+  else if (idx === 1) { key = 'birth'; text = `${L.coord(s.place.lat, s.place.lon)} · ${L.longDate(s.birthMs, s.place.tz)}`; }
+  else if (idx === 4) { key = 'home'; text = `${L.coord(here.lat, here.lon)} · ${L.today}`; }
   else { key = 'space'; text = L.fromEarth(s.R); }
   if (key !== metaKey) { metaKey = key; metaEl.textContent = text; }
 }
 
 // ---------- tilt the phone to look around ----------
 // Relative to how the phone was held when the story started, so nothing jumps; drifts back to centre slowly.
-const tilt = { yaw: 0, pitch: 0, ty: 0, tp: 0, base: null, on: false };
+const tilt = { yaw: 0, pitch: 0, ty: 0, tp: 0, base: null, on: false, angle: null };
 const coarse = matchMedia('(pointer: coarse)').matches;
 function onOrient(e) {
   if (e.alpha == null || e.beta == null) return;
-  const angle = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
-  const landscape = Math.abs(angle) === 90;
+  const raw = (screen.orientation && screen.orientation.angle) ?? window.orientation ?? 0;
+  const angle = ((raw % 360) + 360) % 360;
+  if (angle !== tilt.angle) { tilt.angle = angle; tilt.base = null; }   // turned the phone: start from the new pose
   const yawDeg = e.alpha;
-  const pitchDeg = landscape ? (angle === 90 ? -e.gamma : e.gamma) : e.beta;
+  const pitchDeg = angle === 90 ? -e.gamma : angle === 270 ? e.gamma : angle === 180 ? -e.beta : e.beta;
   if (!tilt.base) tilt.base = { yaw: yawDeg, pitch: pitchDeg };
   let dy = yawDeg - tilt.base.yaw;
   dy = ((dy + 540) % 360) - 180;
@@ -757,13 +809,26 @@ function soundForScene(sc) {
 }
 
 // ---------- adaptive quality ----------
-// Steps down one notch at a time: first the glow, then resolution.
-const QUALITY = [() => sky.setPost(false), () => sky.setMaxDpr(1), () => sky.setMaxDpr(0.75)];
-let slowFor = 0, qualityStep = 0;
-function watchPerformance(dt) {
-  if (document.hidden || qualityStep >= QUALITY.length) return;
-  slowFor = dt > 0.034 ? slowFor + dt : Math.max(0, slowFor - dt * 0.5);
-  if (slowFor > 2) { QUALITY[qualityStep++](); slowFor = 0; }
+// Level 0: full quality. 1: no glow. 2: no glow, 1× resolution. 3: no glow, 0.75× resolution.
+// Judged on the median frame time of each second; steps down fast, climbs back after sustained headroom.
+let qualityLevel = 0, frameTimes = [], judgedAt = 0, fastSeconds = 0;
+function applyQuality(level) {
+  qualityLevel = level;
+  if (!sky) return;
+  sky.setPost(level === 0);
+  sky.setMaxDpr(level <= 1 ? 2 : level === 2 ? 1 : 0.75);
+}
+function watchPerformance(rawDt, now) {
+  if (document.hidden || rawDt > 0.5) { frameTimes = []; return; }   // tab switches are not slow frames
+  frameTimes.push(rawDt);
+  if (now - judgedAt < 1000 || frameTimes.length < 10) return;
+  judgedAt = now;
+  const sorted = frameTimes.slice().sort((a, b) => a - b);
+  const median = sorted[sorted.length >> 1];
+  frameTimes = [];
+  if (median > 0.034 && qualityLevel < 3) { applyQuality(qualityLevel + 1); fastSeconds = 0; }
+  else if (median < 0.019 && qualityLevel > 0) { if (++fastSeconds >= 6) { applyQuality(qualityLevel - 1); fastSeconds = 0; } }
+  else fastSeconds = 0;
 }
 
 // ---------- the finale's live distance ----------
@@ -778,13 +843,16 @@ function updateTicker(T) {
 const railEl = $('#rail');
 const railBtns = [...railEl.querySelectorAll('[data-go]')];
 function updateRail(T) {
-  railEl.classList.toggle('is-on', S.ready && T > 0.9);
+  const railOn = S.ready && T > 0.9 && !F_STATE.on;
+  railEl.classList.toggle('is-on', railOn);
+  railEl.inert = !railOn;
   const idx = Math.min(4, Math.max(1, Math.floor(T + 0.02)));
   railBtns.forEach((b) => b.classList.toggle('is-active', +b.dataset.go === idx));
 }
 railBtns.forEach((b) => b.addEventListener('click', () => {
-  const m = metrics[+b.dataset.go];
-  if (m) smoothScrollTo(m.top + (+b.dataset.go === 2 ? 0 : 0), 1400);
+  const i = +b.dataset.go, m = metrics[i];
+  const settle = { 1: 0.05, 2: 0.6, 3: 0.66, 4: 0.7 }[i] ?? 0;   // where that chapter's scene has finished arriving
+  if (m) smoothScrollTo(m.top + (m.h - m.vh) * settle, 1400);
 }));
 function smoothScrollTo(target, dur) {
   if (reduceMotion) { window.scrollTo(0, target); return; }
@@ -798,7 +866,8 @@ function smoothScrollTo(target, dur) {
 }
 
 // ---------- cursor: a ring that follows the mouse and settles on stars ----------
-const fine = matchMedia('(hover: hover) and (pointer: fine)').matches;
+const fine = matchMedia('(hover: hover) and (pointer: fine)').matches
+  && !matchMedia('(prefers-contrast: more), (forced-colors: active)').matches;
 const cursorEl = document.querySelector('.cursor');
 const ring = { x: -100, y: -100, tx: -100, ty: -100, s: 1 };
 let mouse = null, mouseTarget = null;
@@ -832,12 +901,12 @@ async function makePostcard() {
   const s = S.story;
   if (!s || !sky) return;
   const W = 1080, H = 1350;
-  const saveView = { ...sky.view }, saveEnv = { ...sky.env };
+  const saveView = { ...sky.view }, saveEnv = { ...sky.env, bloom: sky.env.bloom ?? 1 };
   // Frame the sphere side-on, high enough to see its depth, with the Sun at the centre.
   const heroDir = norm(s.heroPos);
   const up0 = Math.abs(dot(heroDir, s.birth.zen)) > 0.95 ? s.birth.north : s.birth.zen;
   const side = norm(cross(heroDir, up0));
-  const pos = add(mul(side, -s.R * 2.9 - 6), mul(up0, s.R * 0.9 + 2));
+  const pos = add(mul(side, -s.R * 3.6 - 8), mul(up0, s.R * 0.6 + 2));
   const fwd = norm(mul(pos, -1));
   const right = norm(cross(fwd, up0));
   Object.assign(sky.view, { cam: pos, fwd, right, up: cross(right, fwd), fov: 46 });
@@ -856,8 +925,8 @@ async function makePostcard() {
   const ch = src.height, cw = Math.min(src.width, ch * 0.8);
   const cx = Math.max(0, Math.min(src.width - cw, (sunP ? sunP.x * k : src.width / 2) - cw / 2));
   const sc = W / cw;
-  g.drawImage(src, cx, 0, cw, ch, 0, (H - ch * sc) / 2, W, ch * sc);
-  const oy = (H - ch * sc) / 2;
+  const oy = (H - ch * sc) / 2 - H * 0.1;                   // the sphere sits in the upper part, above the type
+  g.drawImage(src, cx, 0, cw, ch, 0, oy, W, ch * sc);
   const toPoster = (p) => ({ x: (p.x * k - cx) * sc, y: p.y * k * sc + oy });
   Object.assign(sky.view, saveView); Object.assign(sky.env, saveEnv);
 
@@ -878,7 +947,7 @@ async function makePostcard() {
     g.strokeStyle = 'rgba(241,211,161,0.75)'; g.beginPath(); g.arc(q.x, q.y, 13, 0, Math.PI * 2); g.stroke();
     g.font = 'italic 400 26px "Cormorant Garamond", serif'; g.fillStyle = ink; g.textAlign = 'left';
     g.fillText(catalog.label(m.i, lang), q.x + 22, q.y + 2);
-    mono(13, faint, L.postAge(Math.floor(m.dist)), q.x + 22, q.y + 24);
+    mono(13, faint, L.postAge(ageAt(m)), q.x + 22, q.y + 24);
   }
   if (heroP) {
     const q = toPoster(heroP);
@@ -906,7 +975,7 @@ async function makePostcard() {
   g.font = 'italic 400 30px "Cormorant Garamond", serif';
   let x = 72;
   for (const m of done) {
-    const label = `${Math.floor(m.dist)} · ${catalog.label(m.i, lang)}`;
+    const label = `${ageAt(m)} · ${catalog.label(m.i, lang)}`;
     g.fillStyle = ink; g.fillText(label, x, H - 186);
     x += g.measureText(label).width + 40;
     if (x > W - 200) break;
@@ -921,7 +990,15 @@ async function makePostcard() {
   const a = Object.assign(document.createElement('a'), { href: url, download: `svet-${S.query.date}.png` });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
-  $('#share-note').textContent = tr('postSaved');
+  flashNote(tr('postSaved'));
+}
+/** Status line under the finale buttons: says what happened, then clears itself. */
+let noteTimer = 0;
+function flashNote(text) {
+  const el = $('#share-note');
+  el.textContent = text;
+  clearTimeout(noteTimer);
+  noteTimer = setTimeout(() => { el.textContent = ''; }, 6000);
 }
 $('#postcard').addEventListener('click', () => { makePostcard().catch((err) => console.warn('postcard failed', err)); });
 
@@ -936,6 +1013,11 @@ function stageOpening(t) {
   body.classList.toggle('op-form', p >= 0.64);
   body.classList.toggle('op-done', p >= 0.9);
   if (!S.ready && opening.phase !== 'gate' && sky) introChimes(t);
+  const gated = opening.phase === 'gate';
+  if (gated !== stageOpening.gated) {
+    stageOpening.gated = gated;
+    for (const el of [$('#story'), $('.wordmark'), soundBtn, $('#colophon')]) el.inert = gated;   // nothing invisible is reachable
+  }
 }
 // Each pulse that crosses a bright star rings it, softly.
 let ringPrev = [0, 0, 0, 0];
@@ -968,12 +1050,19 @@ function enter(withSound) {
   ringPrev = [0, 0, 0, 0];
   pointer = null;   // the cursor is still resting on the button: do not read a star under it
   gateEl.setAttribute('aria-hidden', 'true');
+  if (S.ready && metrics[1]) {
+    // A shared link: the story is already computed, so fly straight into that sky.
+    if (!reduceMotion) audio.whoosh(2.8);
+    smoothScrollTo(metrics[1].top, reduceMotion ? 0 : 3800);
+    return;
+  }
   if (!matchMedia('(pointer: coarse)').matches) setTimeout(() => { if (!S.ready) $('#f-date').focus({ preventScroll: true }); }, reduceMotion ? 50 : OPEN_DUR * 640);
 }
 gateEl.querySelector('[data-enter="sound"]').addEventListener('click', () => enter(true));
 gateEl.querySelector('[data-enter="quiet"]').addEventListener('click', () => enter(false));
 window.addEventListener('keydown', (e) => {
-  if (opening.phase === 'gate' && e.key === 'Enter' && gateEl.classList.contains('is-ready')) { e.preventDefault(); enter(soundOn); }
+  // Enter on a focused button is that button's own click; only a bare Enter means "enter with the saved choice".
+  if (opening.phase === 'gate' && e.key === 'Enter' && gateEl.classList.contains('is-ready') && !e.target.closest('button, a, input, select, textarea')) { e.preventDefault(); enter(soundOn); }
   else if (opening.phase === 'play') skipOpening();
 });
 // Impatient viewers can jump straight to the finished first screen.
@@ -1021,7 +1110,7 @@ let tipKey = '', tipXY = null;
  * distance alone, so the ring lands on the dot you are pointing at, not on a brighter neighbour.
  */
 function pickStar(px, py, radius) {
-  const v = sky.view, e = sky.env, W = window.innerWidth, H = window.innerHeight;
+  const v = sky.view, e = sky.env, W = viewW(), H = viewH();
   const f = 1 / Math.tan((v.fov * Math.PI) / 360), aspect = W / H;
   const earth = e.earth, Z = e.zenith;
   const pxScale = Math.max(0.8, Math.min(1.4, H / 900));
@@ -1065,16 +1154,27 @@ function pickStar(px, py, radius) {
   }
   return best < 0 ? null : { i: best, ...bestXY };
 }
+let pickCache = { key: '', hit: null };
 function placeTooltip(now) {
   if (pointer && pointer.touch && now > pointer.until) pointer = null;
   const settled = S.ready || opening.phase === 'done';   // no tooltips while the opening plays
-  const hit = settled && pointer && !drag.active && sky ? pickStar(pointer.x, pointer.y, pointer.touch ? 22 : 10) : null;
+  let hit = null;
+  if (settled && pointer && !drag.active && sky) {
+    // Re-pick only when the pointer or the camera moved (12k stars per frame is wasted work otherwise).
+    const v = sky.view;
+    const key = `${pointer.x}|${pointer.y}|${v.cam.map((c) => c.toFixed(3))}|${v.fwd.map((c) => c.toFixed(5))}|${(sky.env.earth || 0).toFixed(2)}`;
+    if (key !== pickCache.key) pickCache = { key, hit: pickStar(pointer.x, pointer.y, pointer.touch ? 22 : 10) };
+    hit = pickCache.hit;
+  }
   tipEl.classList.toggle('is-on', !!hit);
   if (!hit) { tipKey = ''; return; }
-  const flip = hit.x > window.innerWidth - 300;
-  tipEl.classList.toggle('is-flipped', flip);
   tipEl.style.transform = `translate3d(${hit.x.toFixed(1)}px, ${hit.y.toFixed(1)}px, 0)`;
   tipXY = { x: hit.x, y: hit.y };
+  // Text to the right of the star, or to the left near the edge; on narrow screens keep it inside the view.
+  const bodyW = tipEl.lastElementChild.offsetWidth || 260;
+  const W = viewW();
+  const fitsRight = hit.x + 24 + bodyW < W - 8, fitsLeft = hit.x - 24 - bodyW > 8;
+  tipEl.classList.toggle('is-flipped', !fitsRight && fitsLeft);
   const key = `${hit.i}|${lang}|${S.ready}`;
   if (key === tipKey) return;
   tipKey = key;
@@ -1082,12 +1182,13 @@ function placeTooltip(now) {
   const nowYear = new Date().getFullYear();
   let text;
   if (S.ready) {
-    const s = S.story, at = A.arrivalMs(s.birthMs, dist), year = F.parts(at, here.tz).year, age = Math.floor(dist);
+    const s = S.story, at = A.arrivalMs(s.birthMs, dist), year = F.parts(at, s.place.tz).year, age = calendarAge(s.birthMs, at, s.place.tz);
     text = dist <= s.R ? L.tipReached(year, age) : age > 100 ? L.tipFar(year) : L.tipWill(L.monthYear(at, here.tz), age);
   } else {
-    text = L.tipSeen(nowYear - Math.round(dist));
+    text = L.tipSeen(nowYear - dist, dist);
   }
   tipEl.querySelector('.tip-name').textContent = catalog.names.has(i) ? catalog.label(i, lang) : L.unnamedStar;
+  tipEl.lastElementChild.style.maxWidth = `${Math.min(300, viewW() - 64)}px`;
   const con = catalog.constellation(i, lang);
   tipEl.querySelector('.tip-meta').textContent = L.tipDist(dist) + (con ? ` · ${L.tipCon(con)}` : '');
   tipEl.querySelector('.tip-text').textContent = text;
@@ -1101,6 +1202,7 @@ const inSpaceChapter = () => S.ready && Ts > 2.12 && Ts < 3.9;
 const canDrag = () => !!sky && ((!S.ready && openP(performance.now() / 1000) > 0.7) || (S.ready && Ts < 0.35) || inSpaceChapter());
 let dragTarget = drag, downAt = null;
 window.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'mouse' && !e.target.closest('button, a, input, select, textarea, label, summary, .birth')) downAt = { x: e.clientX, y: e.clientY };
   if (!canDrag() || e.button !== 0) return;
   if (e.target.closest('input, button, a, select, textarea, label, summary, .birth, .topbar, .colophon')) return;
   dragTarget = !S.ready || Ts < 0.35 ? drag : spaceDrag;
@@ -1130,12 +1232,14 @@ const endDrag = (e) => {
 };
 window.addEventListener('pointerup', endDrag);
 window.addEventListener('pointercancel', () => endDrag(null));
-document.addEventListener('pointerleave', () => { pointer = null; });
+document.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') pointer = null; });
 window.addEventListener('blur', () => { pointer = null; });
 function frame(now) {
   if (window.__svet && window.__svet.paused) { requestAnimationFrame(frame); return; }
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const rawDt = (now - last) / 1000;
+  const dt = Math.min(0.05, rawDt);
   last = now;
+  if (sky && sky.gl.isContextLost()) { requestAnimationFrame(frame); return; }
   const T = readScroll();
   Ts += (T - Ts) * (1 - Math.exp(-dt * (reduceMotion ? 30 : 5)));
   if (sky) {
@@ -1165,12 +1269,12 @@ function frame(now) {
       soundForScene(sc);
     }
     if (!skyShown) { skyShown = true; document.body.classList.add('sky-on'); }
-    watchPerformance(dt);
+    watchPerformance(rawDt, now);
   } else if (S.ready) {
     scene(Ts, now / 1000);
   }
   updateMeta(Ts);
-  hintEl.classList.toggle('is-on', S.ready && T > 0.98 && T < 1.25);
+  hintEl.classList.toggle('is-on', S.ready && T > 0.98 && T < 1.25 && !F_STATE.on);
   if (sky) document.body.classList.toggle('sky-bright', (sky.env.day || 0) * (sky.env.earth || 0) > 0.3);
   updateTicker(Ts);
   updateRail(Ts);
@@ -1199,12 +1303,19 @@ function fail(msg, field) {
   if (field) { field.setAttribute('aria-invalid', 'true'); field.focus(); }
 }
 
-function start({ date, time, placeName }, { animate = true } = {}) {
+function placeFromGeo(geo) {
+  if (!geo || typeof geo !== 'object') return null;
+  const lat = +geo.lat, lon = +geo.lon, tz = String(geo.tz || '');
+  if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180) || !tz) return null;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch { return null; }
+  return { name: null, lat, lon, tz, guessed: true };
+}
+function start({ date, time, placeName, geo }, { animate = true } = {}) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date || '');
   if (!m) return fail(tr('errDate'), $('#f-date'));
   const [y, mo, d] = [+m[1], +m[2], +m[3]];
   if (y < 1900) return fail(tr('errOld'), $('#f-date'));
-  let place = here;
+  let place = placeFromGeo(geo) || here;
   if (placeName && placeName.trim()) {
     place = findPlace(placeName);
     if (!place) return fail(tr('errPlace'), $('#f-place'));
@@ -1228,6 +1339,7 @@ function start({ date, time, placeName }, { animate = true } = {}) {
   measure();
   btn.removeAttribute('aria-busy');
   S.query = { date, time: timeKnown ? time : '', placeName: place.guessed ? '' : place.name, lang };
+  if (place.guessed) S.query.geo = { lat: +place.lat.toFixed(2), lon: +place.lon.toFixed(2), tz: place.tz };   // the sky of the sender's place, not the reader's
 
   const target = metrics[1].top;
   if (!animate || reduceMotion) { window.scrollTo(0, target); return; }
@@ -1257,10 +1369,10 @@ $('#share').addEventListener('click', async () => {
   try {
     if (navigator.share && matchMedia('(pointer: coarse)').matches) {
       await navigator.share({ title: tr('title'), url });
-      note.textContent = tr('shared');
+      flashNote(tr('shared'));
     } else {
       await navigator.clipboard.writeText(url);
-      note.textContent = tr('copied');
+      flashNote(tr('copied'));
     }
   } catch (err) {
     if (err && err.name === 'AbortError') return;
@@ -1268,7 +1380,10 @@ $('#share').addEventListener('click', async () => {
   }
 });
 $('#restart').addEventListener('click', () => {
-  if (F_STATE.on) { F_STATE.on = false; futureEl.hidden = true; body.classList.remove('in-future'); }
+  if (F_STATE.on) {
+    F_STATE.on = false; futureEl.hidden = true; body.classList.remove('in-future');
+    document.documentElement.classList.remove('no-scroll'); $('#ch-now').inert = false;
+  }
   S.ready = false; S.story = null; S.Rshow = 0; prevR = 0; lifeShown = 0; lifeKey = '';
   opening.phase = 'done';
   msPool.forEach((el) => el.classList.remove('is-on'));
@@ -1286,12 +1401,15 @@ fillDatalist();
 window.addEventListener('resize', measure);
 measure();
 
-// Open a shared link: prefill and compute, but let the viewer scroll themselves.
+// Open a shared link: prefill and compute; entering through the gate then flies straight into that sky.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+window.addEventListener('hashchange', () => { if (/#s=/.test(location.hash)) location.reload(); });
 const shared = /#s=([\w-]+)/.exec(location.hash);
 if (shared) {
   try {
     const q = JSON.parse(fromB64u(shared[1]));
-    if (q.lang && q.lang !== lang && PHRASES[q.lang] && !new URLSearchParams(location.search).get('lang')) setLang(q.lang);
+    // The link's language is used for this visit only; the reader's own saved choice is left alone.
+    if (LANGS.includes(q.lang) && q.lang !== lang && !new URLSearchParams(location.search).get('lang')) setLang(q.lang, { save: false });
     if (q.placeName) { const p = findPlace(q.placeName); if (p) q.placeName = placeName(p, lang); }
     $('#f-date').value = q.date || '';
     $('#f-time').value = q.time || '';

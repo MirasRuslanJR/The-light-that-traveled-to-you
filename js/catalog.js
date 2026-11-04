@@ -1,5 +1,5 @@
 // Star catalogue: decodes the packed HYG data and answers the light-sphere questions.
-import { STAR_DATA_B64, STAR_COUNT, STAR_FIELDS, STAR_NAMES, MAG_LIMIT, LN_DIST } from './data/stars.js?v=23';
+import { STAR_DATA_B64, STAR_COUNT, STAR_FIELDS, STAR_NAMES, MAG_LIMIT, LN_DIST } from './data/stars.js?v=24';
 
 const PC_PER_LY = 1 / 3.261563777;
 
@@ -86,6 +86,8 @@ export function loadCatalog() {
     /** Declination (J2000) in degrees. */
     dec(i) { return Math.asin(pos[i * 3 + 2] / dist[i]) * 180 / Math.PI; },
     /** Star name in 'ru' or 'en'. */
+    /** A real name (traditional or Bayer/Flamsteed), not just a catalogue number. */
+    isNamed(i) { const e = names.get(i); return !!e && !/^HIP /.test(e.name); },
     label(i, lang = 'ru') {
       const e = names.get(i);
       if (!e) return lang === 'en' ? `Star #${i}` : `Звезда №${i}`;
