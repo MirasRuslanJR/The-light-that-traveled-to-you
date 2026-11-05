@@ -4,6 +4,8 @@
 
 *Свет, который летел к тебе — the site is bilingual: English by default, Russian one click away.*
 
+**Live:** https://mirasruslanjr.github.io/The-light-that-traveled-to-you/
+
 ## The experience
 
 1. **Opening.** A single point of light in the dark. Choose sound or silence. The stars appear brightest first, the way eyes adjust at night, while pulses of light leave the Sun.
